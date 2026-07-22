@@ -1,0 +1,90 @@
+name: Watcher Build & Release
+
+on:
+  repository_dispatch:
+    types: [watcher-release]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch/tag/sha) to build from"
+        required: false
+        default: "master"
+      version:
+        description: "Version tag (e.g. watcher-v0.1.20)"
+        required: true
+
+concurrency:
+  group: watcher-build
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: BluelightNG/coldcluster-folawej-
+  REF: ${{ github.event.client_payload.ref || github.event.inputs.ref || 'master' }}
+  VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
+
+jobs:
+  build-windows:
+    name: watcher-windows-installers
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: watcher
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.REF }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: watcher/package-lock.json
+
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-watcher-${{ hashFiles('watcher/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-watcher-
+
+      - run: npm ci
+      - run: npm run typecheck
+
+      - name: Build Windows installers
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VITE_WATCHER_API_URL: https://api.folawej.com/api/v1
+          UPDATER_GH_TOKEN: ${{ secrets.UPDATER_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+      - name: Create tag on source repo
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          gh release create "${{ env.VERSION }}" \
+            --repo ${{ env.SOURCE_REPO }} \
+            --title "${{ env.VERSION }}" \
+            --notes "Watcher release ${{ env.VERSION }}" \
+            watcher/release/*.exe watcher/release/*.yml \
+            || echo "Release may already exist"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: watcher-${{ env.VERSION }}-${{ github.sha }}
+          path: |
+            watcher/release/*.exe
+            watcher/release/*.yml
+          if-no-files-found: warn
+          retention-days: 7

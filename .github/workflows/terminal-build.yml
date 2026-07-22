@@ -1,0 +1,91 @@
+name: Terminal Build & Release
+
+on:
+  repository_dispatch:
+    types: [terminal-release]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch/tag/sha) to build from"
+        required: false
+        default: "master"
+      version:
+        description: "Version tag (e.g. terminal-v2.0.6)"
+        required: true
+
+concurrency:
+  group: terminal-build
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: BluelightNG/coldcluster-folawej-
+  REF: ${{ github.event.client_payload.ref || github.event.inputs.ref || 'master' }}
+  VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
+
+jobs:
+  build-windows:
+    name: terminal-windows-installers
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: terminal
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.REF }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/package-lock.json
+
+      - name: Cache electron-builder
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-terminal-${{ hashFiles('terminal/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-terminal-
+
+      - run: npm ci
+      - run: npm run typecheck
+
+      - name: Build Windows installers
+        run: npm run build:win7
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          VITE_API_BASE_URL: https://api.folawej.com/api/v1
+          MAIN_VITE_API_BASE_URL: https://api.folawej.com/api/v1
+          MAIN_VITE_WS_URL: wss://api.folawej.com/ws/kiosk
+          MAIN_VITE_LOCATION_ID: "1"
+          UPDATER_GH_TOKEN: ${{ secrets.UPDATER_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+
+      - name: Create tag on source repo
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          gh release create "${{ env.VERSION }}" \
+            --repo ${{ env.SOURCE_REPO }} \
+            --title "${{ env.VERSION }}" \
+            --notes "Terminal release ${{ env.VERSION }}" \
+            terminal/release/win7/*.exe terminal/release/win7/*.yml \
+            || echo "Release may already exist"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-${{ env.VERSION }}-${{ github.sha }}
+          path: terminal/release/win7/*.exe
+          if-no-files-found: warn
+          retention-days: 7
