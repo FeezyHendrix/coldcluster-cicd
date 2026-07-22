@@ -68,12 +68,12 @@ jobs:
           UPDATER_GH_TOKEN: ${{ secrets.UPDATER_GH_TOKEN }}
           GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
 
-      - name: Create tag on source repo
+      - name: Create release on CI/CD repo
         env:
-          GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ env.VERSION }}" \
-            --repo ${{ env.SOURCE_REPO }} \
+            --repo FeezyHendrix/coldcluster-cicd \
             --title "${{ env.VERSION }}" \
             --notes "Watcher release ${{ env.VERSION }}" \
             watcher/release/*.exe watcher/release/*.yml \
