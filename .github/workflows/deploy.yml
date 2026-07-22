@@ -55,15 +55,17 @@ jobs:
           USER: ${{ secrets.VPS_USER }}
           DEPLOY_REF: ${{ env.REF }}
         run: |
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_ed25519 "${USER}@${HOST}" \
-            "set -euo pipefail
-             cd /opt/coldcluster
-             echo 'ROLLBACK_REF='\"$(git rev-parse --short HEAD)\"
-             git fetch --prune origin
-             git checkout ${DEPLOY_REF}
-             git reset --hard origin/${DEPLOY_REF} 2>/dev/null || true
-             echo 'DEPLOYING='\"$(git rev-parse --short HEAD)\"
-             bash deploy/scripts/deploy.sh"
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_ed25519 "${USER}@${HOST}" bash -s "$DEPLOY_REF" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          REF="$1"
+          cd /opt/coldcluster
+          echo "ROLLBACK_REF=$(git rev-parse --short HEAD)"
+          git fetch --prune origin
+          git checkout "$REF"
+          git reset --hard "origin/$REF" 2>/dev/null || true
+          echo "DEPLOYING=$(git rev-parse --short HEAD)"
+          bash deploy/scripts/deploy.sh
+          REMOTE_SCRIPT
 
       - name: Verify API health
         run: |
