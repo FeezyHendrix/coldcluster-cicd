@@ -41,11 +41,14 @@ jobs:
           ref: ${{ env.REF }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
 
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: watcher/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: watcher/package-lock.json
+          cache: pnpm
+          cache-dependency-path: watcher/pnpm-lock.yaml
 
       - name: Cache electron-builder
         uses: actions/cache@v4
@@ -53,15 +56,15 @@ jobs:
           path: |
             ~/AppData/Local/electron/Cache
             ~/AppData/Local/electron-builder/Cache
-          key: ${{ runner.os }}-electron-watcher-${{ hashFiles('watcher/package-lock.json') }}
+          key: ${{ runner.os }}-electron-watcher-${{ hashFiles('watcher/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-electron-watcher-
 
-      - run: npm ci
-      - run: npm run typecheck
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
 
       - name: Build Windows installers
-        run: npm run dist:win
+        run: pnpm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VITE_WATCHER_API_URL: https://api.folawej.com/api/v1
