@@ -1,0 +1,98 @@
+name: Deploy
+
+on:
+  repository_dispatch:
+    types: [deploy-trigger]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch/tag/sha)"
+        required: false
+        default: "prod"
+      environment:
+        description: "Target environment"
+        required: false
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: deploy-${{ github.event.client_payload.environment || github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: BluelightNG/coldcluster-folawej-
+  REF: ${{ github.event.client_payload.ref || github.event.inputs.ref || 'prod' }}
+  DEPLOY_ENV: ${{ github.event.client_payload.environment || github.event.inputs.environment || 'production' }}
+
+jobs:
+  deploy:
+    name: deploy-${{ github.event.client_payload.environment || github.event.inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.client_payload.environment || github.event.inputs.environment || 'production' }}
+      url: https://api.folawej.com
+    timeout-minutes: 15
+
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          USER: ${{ secrets.VPS_USER }}
+          DEPLOY_REF: ${{ env.REF }}
+        run: |
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_ed25519 "${USER}@${HOST}" \
+            "set -euo pipefail
+             cd /opt/coldcluster
+             echo 'ROLLBACK_REF='\"$(git rev-parse --short HEAD)\"
+             git fetch --prune origin
+             git checkout ${DEPLOY_REF}
+             git reset --hard origin/${DEPLOY_REF} 2>/dev/null || true
+             echo 'DEPLOYING='\"$(git rev-parse --short HEAD)\"
+             bash deploy/scripts/deploy.sh"
+
+      - name: Verify API health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS https://api.folawej.com/health >/dev/null 2>&1; then
+              echo "API healthy after deploy (attempt $i)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "API health check failed after 30 attempts"
+          exit 1
+
+      - name: Verify admin panel
+        run: |
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' https://admin.folawej.com)
+          if [ "$STATUS" = "200" ]; then
+            echo "Admin panel healthy"
+          else
+            echo "Admin panel returned $STATUS"
+            exit 1
+          fi
+
+      - name: Verify mobile app
+        run: |
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' https://app.folawej.com)
+          if [ "$STATUS" = "200" ]; then
+            echo "Mobile app healthy"
+          else
+            echo "Mobile app returned $STATUS"
+            exit 1
+          fi

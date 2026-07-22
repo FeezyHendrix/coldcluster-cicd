@@ -1,0 +1,33 @@
+name: Webhook from Main Repo
+
+on:
+  repository_dispatch:
+    types: [main-repo-push]
+
+jobs:
+  route:
+    name: route-event
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log event
+        run: |
+          echo "Received push from main repo"
+          echo "Ref: ${{ github.event.client_payload.ref }}"
+          echo "SHA: ${{ github.event.client_payload.sha }}"
+          echo "Action: ${{ github.event.client_payload.action }}"
+
+      - name: Trigger CI
+        if: github.event.client_payload.action == 'ci'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: ci-trigger
+          client-payload: '{"ref": "${{ github.event.client_payload.ref }}", "sha": "${{ github.event.client_payload.sha }}"}'
+
+      - name: Trigger Deploy
+        if: github.event.client_payload.action == 'deploy'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: deploy-trigger
+          client-payload: '{"ref": "${{ github.event.client_payload.ref }}", "sha": "${{ github.event.client_payload.sha }}", "environment": "${{ github.event.client_payload.environment }}"}'

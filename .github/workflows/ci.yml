@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  repository_dispatch:
+    types: [ci-trigger]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to test (branch/tag/sha)"
+        required: false
+        default: "master"
+
+concurrency:
+  group: ci-${{ github.event.client_payload.ref || github.event.inputs.ref || 'master' }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: BluelightNG/coldcluster-folawej-
+  REF: ${{ github.event.client_payload.ref || github.event.inputs.ref || 'master' }}
+
+jobs:
+  checkout:
+    name: checkout-source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.co.outputs.sha }}
+    steps:
+      - name: Checkout source repo
+        id: co
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.REF }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+      - run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: .
+          retention-days: 1
+
+  gravas-test:
+    name: gravas-test
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gravas
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: gravas/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -race -short ./...
+
+  sentry-build:
+    name: sentry-build
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentry
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: sentry/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  mobile-build:
+    name: mobile-build
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  terminal-typecheck:
+    name: terminal-typecheck
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: terminal/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  watcher-typecheck:
+    name: watcher-typecheck
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watcher
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: watcher/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
+  watchtower-build:
+    name: watchtower-build
+    needs: checkout
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watchtower
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: watchtower/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: watchtower/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+  compose-validate:
+    name: compose-validate
+    needs: checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: source
+      - run: docker compose -f deploy/docker-compose.prod.yml config
